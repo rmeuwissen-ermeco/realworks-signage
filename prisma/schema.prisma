@@ -17,8 +17,13 @@ model Tenant {
   brandBackground String   @default("#0b1020")
   brandText       String   @default("#ffffff")
 
-  // RealWorks later
-  realworksToken  String?
+  // RealWorks
+  realworksBaseUrl   String?  // bijv. https://api.realworks.nl (of wat RW geeft)
+  realworksAfdeling  String?  // bijv. "001" of jouw vestigingscode
+  realworksToken     String?  // tijdelijk plain; v0.3: encrypt
+  realworksEnabled   Boolean  @default(false)
+  realworksLastSyncAt DateTime?
+  realworksLastSyncStatus String?
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
