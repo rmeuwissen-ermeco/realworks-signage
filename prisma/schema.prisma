@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Tenant {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+
+  // Branding (per tenant)
+  brandPrimary    String   @default("#1a73e8")
+  brandAccent     String   @default("#34a853")
+  brandBackground String   @default("#0b1020")
+  brandText       String   @default("#ffffff")
+
+  // RealWorks later
+  realworksToken  String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  streams         Stream[]
+  objects         ObjectCache[]
+}
+
+model Stream {
+  id              String   @id @default(cuid())
+  streamKey       String   @unique
+  title           String
+  width           Int      @default(1920)
+  height          Int      @default(1080)
+  secondsPerItem  Int      @default(8)
+
+  // Anti-caching / publish mechanisme
+  publishedVersion Int     @default(1)
+  publishedAt      DateTime @default(now())
+
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model ObjectCache {
+  id          String   @id @default(cuid())
+
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  objectCode  String
+  afdelingCode String?
+
+  status      String
+  addressLine String
+  city        String
+  priceLine   String
+  features    Json
+  imageUrl    String?
+  updatedAtISO String
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, objectCode])
+}

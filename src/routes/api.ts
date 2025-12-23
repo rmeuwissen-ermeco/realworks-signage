@@ -1,17 +1,25 @@
 import { Router } from "express";
-import { demoItems, demoStreams } from "../data/demo";
+import { prisma } from "../db/prisma";
 
 const router = Router();
 
-// Feed endpoint (no caching)
-router.get("/api/streams/:streamKey/feed.json", (req, res) => {
+router.get("/api/streams/:streamKey/feed.json", async (req, res) => {
   const { streamKey } = req.params;
-  const stream = demoStreams[streamKey];
+
+  const stream = await prisma.stream.findUnique({
+    where: { streamKey },
+    include: { tenant: true },
+  });
+
   if (!stream) return res.status(404).json({ error: "Unknown stream" });
 
-  const items = demoItems[streamKey] || [];
+  const items = await prisma.objectCache.findMany({
+    where: { tenantId: stream.tenantId },
+    orderBy: { updatedAt: "desc" },
+    take: 50,
+  });
 
-  // No-store: signage moet altijd de meest recente feed kunnen ophalen
+  // No-store: display moet altijd nieuwste feed kunnen ophalen
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
@@ -24,11 +32,26 @@ router.get("/api/streams/:streamKey/feed.json", (req, res) => {
       width: stream.width,
       height: stream.height,
       secondsPerItem: stream.secondsPerItem,
-      theme: stream.theme,
-      logoUrl: stream.logoUrl || null,
-      generatedAtISO: new Date().toISOString()
+      publishedVersion: stream.publishedVersion,
+      generatedAtISO: new Date().toISOString(),
+      theme: {
+        primary: stream.tenant.brandPrimary,
+        accent: stream.tenant.brandAccent,
+        background: stream.tenant.brandBackground,
+        text: stream.tenant.brandText,
+      },
+      logoUrl: null, // v0.3
     },
-    items
+    items: items.map((it) => ({
+      id: it.objectCode,
+      status: it.status,
+      addressLine: it.addressLine,
+      city: it.city,
+      priceLine: it.priceLine,
+      features: it.features,
+      imageUrl: it.imageUrl,
+      updatedAtISO: it.updatedAtISO,
+    })),
   });
 });
 
