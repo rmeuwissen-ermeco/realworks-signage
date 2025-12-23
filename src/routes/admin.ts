@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../db/prisma";
+import { fetchActiveObjectCodes, fetchObjectDetail, RealWorksConfig } from "../realworks/client";
 
 const router = Router();
 
@@ -23,7 +24,6 @@ function slugify(input: string): string {
 }
 
 function keyify(input: string): string {
-  // streamKey: a-z0-9- (max 40)
   const base = slugify(input).slice(0, 40);
   return base || `stream-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -36,7 +36,6 @@ function layout(title: string, body: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${esc(title)} — RealWorks Signage</title>
 
-  <!-- Material-ish: Roboto + simple clean UI (no heavy frameworks) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
@@ -51,6 +50,7 @@ function layout(title: string, body: string): string {
       --border:rgba(255,255,255,.08);
       --danger:#e53935;
       --ok:#34a853;
+      --warn:#fbbc04;
     }
     *{box-sizing:border-box}
     body{
@@ -70,10 +70,7 @@ function layout(title: string, body: string): string {
       display:flex; align-items:center; justify-content:space-between;
       z-index:10;
     }
-    header .brand{
-      display:flex; gap:10px; align-items:center;
-      font-weight:700;
-    }
+    header .brand{display:flex; gap:10px; align-items:center; font-weight:700;}
     header .pill{
       font-size:12px; color:var(--muted);
       border:1px solid var(--border);
@@ -112,6 +109,7 @@ function layout(title: string, body: string): string {
     .dot{width:8px; height:8px; border-radius:50%;}
     .dot.ok{background:var(--ok)}
     .dot.danger{background:var(--danger)}
+    .dot.warn{background:var(--warn)}
     .btn{
       appearance:none; border:none;
       background:var(--primary);
@@ -125,7 +123,7 @@ function layout(title: string, body: string): string {
     .btn.small{padding:7px 10px; font-size:13px; border-radius:10px}
     .field{display:flex; flex-direction:column; gap:6px; min-width:220px}
     .field label{font-size:12px; color:var(--muted)}
-    input[type="text"], input[type="number"], input[type="color"]{
+    input[type="text"], input[type="number"], input[type="color"], input[type="password"]{
       width:100%;
       padding:10px 10px;
       border-radius:10px;
@@ -148,6 +146,13 @@ function layout(title: string, body: string): string {
     .kpi .val{font-size:18px; font-weight:700}
     .kpi .lbl{font-size:12px; color:var(--muted)}
     .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+    .msg{
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:10px 12px;
+      background:rgba(0,0,0,.12);
+      margin-bottom:12px;
+    }
   </style>
 </head>
 <body>
@@ -168,6 +173,11 @@ function layout(title: string, body: string): string {
 </main>
 </body>
 </html>`;
+}
+
+function withMsg(url: string, msg: string) {
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}msg=${encodeURIComponent(msg)}`;
 }
 
 // Routes
@@ -255,7 +265,6 @@ router.post("/tenants/create", async (req, res) => {
 
   const slug = slugInput ? slugify(slugInput) : slugify(name);
 
-  // Uniqueness: if slug exists, append a suffix
   let finalSlug = slug;
   let n = 2;
   while (await prisma.tenant.findUnique({ where: { slug: finalSlug } })) {
@@ -263,10 +272,7 @@ router.post("/tenants/create", async (req, res) => {
   }
 
   const tenant = await prisma.tenant.create({
-    data: {
-      name,
-      slug: finalSlug,
-    },
+    data: { name, slug: finalSlug },
   });
 
   res.redirect(`/admin/tenants/${tenant.id}`);
@@ -274,6 +280,7 @@ router.post("/tenants/create", async (req, res) => {
 
 router.get("/tenants/:tenantId", async (req, res) => {
   const tenantId = req.params.tenantId;
+  const msg = String(req.query?.msg ?? "").trim();
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
@@ -282,7 +289,13 @@ router.get("/tenants/:tenantId", async (req, res) => {
 
   if (!tenant) return res.status(404).send("Tenant not found");
 
+  const rwEnabled = tenant.realworksEnabled ? "checked" : "";
+  const rwStatus = tenant.realworksLastSyncStatus ? esc(tenant.realworksLastSyncStatus) : "—";
+  const rwLast = tenant.realworksLastSyncAt ? new Date(tenant.realworksLastSyncAt).toISOString() : "—";
+
   const body = `
+    ${msg ? `<div class="msg">${esc(msg)}</div>` : ""}
+
     <div class="row" style="margin-bottom:12px;">
       <div>
         <h1>${esc(tenant.name)}</h1>
@@ -322,36 +335,72 @@ router.get("/tenants/:tenantId", async (req, res) => {
       </div>
 
       <div class="card">
-        <h2>Nieuwe stream</h2>
-        <form method="post" action="/admin/tenants/${esc(tenant.id)}/streams/create" class="grid" style="margin-top:10px;">
+        <h2>RealWorks koppeling (v0.2.2)</h2>
+        <form method="post" action="/admin/tenants/${esc(tenant.id)}/realworks/update" class="grid" style="margin-top:10px;">
           <div class="field">
-            <label>Titel</label>
-            <input name="title" type="text" placeholder="Etalage — Actief aanbod" required />
+            <label>BASE_URL</label>
+            <input name="realworksBaseUrl" type="text" placeholder="https://api.realworks.nl/..." value="${esc(tenant.realworksBaseUrl ?? "")}" />
+            <div class="hint">Uit RealWorks docs/console.</div>
           </div>
           <div class="field">
-            <label>Stream key (optioneel)</label>
-            <input name="streamKey" type="text" placeholder="etalage-1" />
-            <div class="hint">Leeg = automatisch op basis van titel.</div>
+            <label>AFDELING</label>
+            <input name="realworksAfdeling" type="text" placeholder="bijv. 001" value="${esc(tenant.realworksAfdeling ?? "")}" />
+          </div>
+          <div class="field">
+            <label>TOKEN</label>
+            <input name="realworksToken" type="password" placeholder="rwauth token" value="${esc(tenant.realworksToken ?? "")}" />
+            <div class="hint">Let op: dit staat nu nog plain in DB. v0.3 encrypten.</div>
           </div>
           <div class="row">
-            <div class="field">
-              <label>Breedte (px)</label>
-              <input name="width" type="number" min="200" max="10000" value="1920" required />
-            </div>
-            <div class="field">
-              <label>Hoogte (px)</label>
-              <input name="height" type="number" min="200" max="10000" value="1080" required />
-            </div>
-            <div class="field">
-              <label>Seconden per item</label>
-              <input name="secondsPerItem" type="number" min="2" max="120" value="8" required />
-            </div>
+            <label class="muted" style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" name="realworksEnabled" ${rwEnabled} />
+              RealWorks actief
+            </label>
+            <div class="spacer"></div>
+            <button class="btn" type="submit">Opslaan</button>
           </div>
-          <div class="row">
-            <button class="btn" type="submit">Stream aanmaken</button>
+          <div class="footer-note">
+            Laatste sync: <span class="mono">${rwLast}</span> — status: <span class="mono">${rwStatus}</span>
           </div>
         </form>
+
+        <form method="post" action="/admin/tenants/${esc(tenant.id)}/realworks/sync" style="margin-top:10px;">
+          <button class="btn" type="submit">Sync nu (pull)</button>
+          <div class="hint" style="margin-top:6px;">Haalt objecten binnen uit RealWorks. Werkt zodra de endpoints bekend zijn.</div>
+        </form>
       </div>
+    </div>
+
+    <div class="card" style="margin-top:14px;">
+      <h2>Nieuwe stream</h2>
+      <form method="post" action="/admin/tenants/${esc(tenant.id)}/streams/create" class="grid" style="margin-top:10px;">
+        <div class="field">
+          <label>Titel</label>
+          <input name="title" type="text" placeholder="Etalage — Actief aanbod" required />
+        </div>
+        <div class="field">
+          <label>Stream key (optioneel)</label>
+          <input name="streamKey" type="text" placeholder="etalage-1" />
+          <div class="hint">Leeg = automatisch op basis van titel.</div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Breedte (px)</label>
+            <input name="width" type="number" min="200" max="10000" value="1920" required />
+          </div>
+          <div class="field">
+            <label>Hoogte (px)</label>
+            <input name="height" type="number" min="200" max="10000" value="1080" required />
+          </div>
+          <div class="field">
+            <label>Seconden per item</label>
+            <input name="secondsPerItem" type="number" min="2" max="120" value="8" required />
+          </div>
+        </div>
+        <div class="row">
+          <button class="btn" type="submit">Stream aanmaken</button>
+        </div>
+      </form>
     </div>
 
     <div class="card" style="margin-top:14px;">
@@ -425,6 +474,84 @@ router.post("/tenants/:tenantId/update", async (req, res) => {
   res.redirect(`/admin/tenants/${tenantId}`);
 });
 
+router.post("/tenants/:tenantId/realworks/update", async (req, res) => {
+  const tenantId = req.params.tenantId;
+
+  const realworksBaseUrl = String(req.body?.realworksBaseUrl ?? "").trim() || null;
+  const realworksAfdeling = String(req.body?.realworksAfdeling ?? "").trim() || null;
+  const realworksToken = String(req.body?.realworksToken ?? "").trim() || null;
+  const realworksEnabled = req.body?.realworksEnabled === "on";
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      realworksBaseUrl,
+      realworksAfdeling,
+      realworksToken,
+      realworksEnabled,
+    },
+  });
+
+  res.redirect(withMsg(`/admin/tenants/${tenantId}`, "RealWorks instellingen opgeslagen."));
+});
+
+router.post("/tenants/:tenantId/realworks/sync", async (req, res) => {
+  const tenantId = req.params.tenantId;
+
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+  if (!tenant) return res.status(404).send("Tenant not found");
+
+  if (!tenant.realworksEnabled) {
+    return res.redirect(withMsg(`/admin/tenants/${tenantId}`, "RealWorks staat uit. Zet 'RealWorks actief' aan en sla op."));
+  }
+  if (!tenant.realworksBaseUrl || !tenant.realworksAfdeling || !tenant.realworksToken) {
+    return res.redirect(withMsg(`/admin/tenants/${tenantId}`, "Vul BASE_URL, AFDELING en TOKEN in en sla op."));
+  }
+
+  const cfg: RealWorksConfig = {
+    baseUrl: tenant.realworksBaseUrl,
+    afdeling: tenant.realworksAfdeling,
+    token: tenant.realworksToken,
+  };
+
+  try {
+    // 1) list
+    const codes = await fetchActiveObjectCodes(cfg);
+
+    // 2) detail per object -> upsert in cache
+    for (const code of codes) {
+      const detail = await fetchObjectDetail(cfg, code);
+
+      // TODO mapping zodra we RW payload kennen
+      // Voor nu: we zetten alleen status in lastSyncStatus.
+      // In de volgende stap vullen we echte mapping: adres/prijs/foto/kenmerken.
+      void detail;
+    }
+
+    await prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        realworksLastSyncAt: new Date(),
+        realworksLastSyncStatus: `OK: ${codes.length} object(en) opgehaald`,
+      },
+    });
+
+    return res.redirect(withMsg(`/admin/tenants/${tenantId}`, `Sync gestart/afgerond. ${codes.length} object(en).`));
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+
+    await prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        realworksLastSyncAt: new Date(),
+        realworksLastSyncStatus: `ERROR: ${msg.slice(0, 180)}`,
+      },
+    });
+
+    return res.redirect(withMsg(`/admin/tenants/${tenantId}`, `Sync fout: ${msg}`));
+  }
+});
+
 router.post("/tenants/:tenantId/streams/create", async (req, res) => {
   const tenantId = req.params.tenantId;
 
@@ -459,8 +586,8 @@ router.post("/tenants/:tenantId/streams/create", async (req, res) => {
   res.redirect(`/admin/tenants/${tenantId}`);
 });
 
-router.post("/streams/:streamId/publish", async (req, res) => {
-  const streamId = req.params.streamId;
+router.post("/streams/:streamId/publish", async (_req, res) => {
+  const streamId = _req.params.streamId;
 
   const stream = await prisma.stream.update({
     where: { id: streamId },
