@@ -10,22 +10,24 @@ const signage_1 = __importDefault(require("./routes/signage"));
 const api_1 = __importDefault(require("./routes/api"));
 const app = (0, express_1.default)();
 const port = Number(process.env.PORT || 3000);
+// Body parsers (1x)
 app.use(express_1.default.json({ limit: "2mb" }));
-app.use(express_1.default.urlencoded({ extended: true }));
+app.use(express_1.default.urlencoded({ extended: false }));
 // Static assets
 app.use("/public", express_1.default.static(path_1.default.join(__dirname, "..", "public"), {
     etag: true,
-    maxAge: "1h"
+    maxAge: "1h",
 }));
-// Routes
+// Health
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
+// Routes
+app.use("/admin", admin_1.default);
 app.use("/", signage_1.default);
 app.use("/", api_1.default);
-app.use("/", admin_1.default);
 // 404
 app.use((_req, res) => {
     res.status(404).send("Not found");
 });
 app.listen(port, () => {
-    console.log(`RealWorks Signage v0.1 running on http://localhost:${port}`);
+    console.log(`RealWorks Signage v0.2.1 running on http://localhost:${port}`);
 });

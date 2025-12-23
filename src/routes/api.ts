@@ -3,6 +3,17 @@ import { prisma } from "../db/prisma";
 
 const router = Router();
 
+type FeedItem = {
+  objectCode: string;
+  status: string;
+  addressLine: string;
+  city: string;
+  priceLine: string;
+  features: string[];
+  imageUrl: string | null;
+  updatedAtISO: string | null;
+};
+
 router.get("/api/streams/:streamKey/feed.json", async (req, res) => {
   const { streamKey } = req.params;
 
@@ -19,11 +30,21 @@ router.get("/api/streams/:streamKey/feed.json", async (req, res) => {
     take: 50,
   });
 
-  // No-store: display moet altijd nieuwste feed kunnen ophalen
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
   res.setHeader("Surrogate-Control", "no-store");
+
+  const mapped: FeedItem[] = items.map((it): FeedItem => ({
+    objectCode: it.objectCode,
+    status: it.status,
+    addressLine: it.addressLine,
+    city: it.city,
+    priceLine: it.priceLine,
+    features: it.features,
+    imageUrl: it.imageUrl,
+    updatedAtISO: it.updatedAtISO,
+  }));
 
   res.json({
     stream: {
@@ -40,9 +61,9 @@ router.get("/api/streams/:streamKey/feed.json", async (req, res) => {
         background: stream.tenant.brandBackground,
         text: stream.tenant.brandText,
       },
-      logoUrl: null, // v0.3
+      logoUrl: null
     },
-    items: items.map((it) => ({
+    items: mapped.map((it) => ({
       id: it.objectCode,
       status: it.status,
       addressLine: it.addressLine,
