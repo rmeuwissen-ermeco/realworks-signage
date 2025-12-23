@@ -14,6 +14,12 @@ type FeedItem = {
   updatedAtISO: string | null;
 };
 
+function toStringArray(value: unknown): string[] {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value.map((v) => String(v));
+  return [];
+}
+
 router.get("/api/streams/:streamKey/feed.json", async (req, res) => {
   const { streamKey } = req.params;
 
@@ -30,6 +36,7 @@ router.get("/api/streams/:streamKey/feed.json", async (req, res) => {
     take: 50,
   });
 
+  // No-store: display moet altijd de nieuwste feed kunnen ophalen
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
@@ -41,7 +48,7 @@ router.get("/api/streams/:streamKey/feed.json", async (req, res) => {
     addressLine: it.addressLine,
     city: it.city,
     priceLine: it.priceLine,
-    features: it.features,
+    features: toStringArray(it.features), // ✅ FIX: nooit null, altijd string[]
     imageUrl: it.imageUrl,
     updatedAtISO: it.updatedAtISO,
   }));
