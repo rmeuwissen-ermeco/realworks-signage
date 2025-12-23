@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Signage</title>
+  <link rel="stylesheet" href="/public/signage.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <div class="frame" id="frame">
+      <div class="hero">
+        <img id="heroImg" alt="" />
+        <div class="gradient"></div>
+      </div>
+
+      <div class="content">
+        <div class="top">
+          <div class="badge" id="statusBadge">Actief</div>
+          <div class="meta">
+            <div class="address" id="address">—</div>
+            <div class="city" id="city">—</div>
+          </div>
+        </div>
+
+        <div class="price" id="price">—</div>
+
+        <div class="features" id="features"></div>
+
+        <div class="footer">
+          <div class="brand">
+            <img id="logo" class="logo" alt="" />
+            <div class="brandText">
+              <div class="brandTitle" id="streamTitle">—</div>
+              <div class="brandSub" id="updatedAt">Laatste update: —</div>
+            </div>
+          </div>
+          <div class="hint" id="hint"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/public/signage.js"></script>
+</body>
+</html>
