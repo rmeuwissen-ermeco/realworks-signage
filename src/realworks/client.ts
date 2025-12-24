@@ -1,19 +1,18 @@
 export type RealWorksConfig = {
-  baseUrl: string;
-  afdeling: string;
-  token: string;
+  baseUrl: string;   // https://api.realworks.nl
+  afdeling: string;  // bv 935273
+  token: string;     // token ZONDER "rwauth "
 };
 
-function maskUrl(u: string) {
-  return u.replace(/\/\/([^:]+):([^@]+)@/, "//$1:***@");
-}
-
 function authHeaders(token: string): Record<string, string> {
-  // Meest voorkomende format in RealWorks docs: rwauth <token>
   return {
     Authorization: `rwauth ${token}`,
-    Accept: "application/json",
+    Accept: "application/json;charset=UTF-8",
   };
+}
+
+function cleanBaseUrl(u: string): string {
+  return u.replace(/\/+$/, "");
 }
 
 export async function rwFetchJson<T>(url: string, token: string): Promise<T> {
@@ -21,28 +20,61 @@ export async function rwFetchJson<T>(url: string, token: string): Promise<T> {
 
   if (!r.ok) {
     const txt = await r.text().catch(() => "");
-    throw new Error(`RealWorks HTTP ${r.status} for ${url} :: ${txt.slice(0, 200)}`);
+    throw new Error(`RealWorks HTTP ${r.status} for ${url} :: ${txt.slice(0, 250)}`);
   }
   return (await r.json()) as T;
 }
 
-/**
- * MVP:
- * We moeten 2 endpoints exact weten uit jouw RealWorks doc:
- * 1) List (actief aanbod -> object codes)
- * 2) Detail (1 object -> prijs/adres/media)
- *
- * Totdat jij die 2 urls/templates geeft, geven we expres een duidelijke error.
- */
+type ListResponse = {
+  resultaten: Array<any>;
+  paginering?: { totaalAantal?: number };
+};
+
 export async function fetchActiveObjectCodes(cfg: RealWorksConfig): Promise<string[]> {
-  console.log("[RW] baseUrl:", cfg.baseUrl, "afdeling:", cfg.afdeling);
-  throw new Error(
-    "RealWorks endpoints nog niet ingesteld. Stuur mij: (1) list endpoint voor actief aanbod en (2) detail endpoint template voor 1 object."
-  );
+  const base = cleanBaseUrl(cfg.baseUrl);
+
+  // We vragen de v3 lijst op (actief aanbod).
+  // RealWorks gebruikt pagination met ?vanaf=<id> (laatste id uit resultaten).
+  const maxPages = 20;   // safety
+  const perPage = 100;
+
+  let vanaf: number | null = null;
+  const codes: string[] = [];
+
+  for (let page = 0; page < maxPages; page++) {
+    const url =
+      `${base}/wonen/v3/objecten?actief=true&aantal=${perPage}` +
+      (vanaf ? `&vanaf=${encodeURIComponent(String(vanaf))}` : "");
+
+    const data = await rwFetchJson<ListResponse>(url, cfg.token);
+
+    const batch = (data.resultaten ?? [])
+      .map((r) => String(r?.diversen?.diversen?.objectcode ?? "").trim())
+      .filter(Boolean);
+
+    codes.push(...batch);
+
+    const results = data.resultaten ?? [];
+    if (!results.length) break;
+
+    // Pagination: "id" uit laatste resultaat
+    const lastId = results[results.length - 1]?.id;
+    if (typeof lastId !== "number") break;
+
+    // Als er minder dan perPage terugkomt, zijn we klaar
+    if (results.length < perPage) break;
+
+    vanaf = lastId;
+  }
+
+  // Uniek maken
+  return Array.from(new Set(codes));
 }
 
-export async function fetchObjectDetail(_cfg: RealWorksConfig, _objectCode: string): Promise<any> {
-  throw new Error(
-    "RealWorks endpoints nog niet ingesteld. Stuur mij: (1) list endpoint voor actief aanbod en (2) detail endpoint template voor 1 object."
-  );
+export async function fetchObjectDetail(cfg: RealWorksConfig, objectCode: string): Promise<any> {
+  const base = cleanBaseUrl(cfg.baseUrl);
+
+  // v3 detail: /wonen/v3/objecten/{AFDELING}/{OBJECT}
+  const url = `${base}/wonen/v3/objecten/${encodeURIComponent(cfg.afdeling)}/${encodeURIComponent(objectCode)}`;
+  return rwFetchJson<any>(url, cfg.token);
 }
