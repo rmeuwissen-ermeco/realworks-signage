@@ -5,4 +5,7 @@ node_modules
 /src/generated/prisma
 
 dist/
+node_modules/
 prisma/*.js
+.render-redeploy.txt
+.DS_Store
