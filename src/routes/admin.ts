@@ -519,7 +519,7 @@ router.post("/tenants/:tenantId/realworks/sync", async (req, res) => {
 
     // detail ophalen en cache vullen (MVP)
     for (const code of objectCodes) {
-      const detail = await fetchObjectDetail(cfg, code);
+      const detail: any = await fetchObjectDetail(cfg, code);
 
       // Mapping (MVP): pak wat veilige velden uit de v3 payload
       const status = String(detail?.financieel?.overdracht?.status ?? "ONBEKEND");
