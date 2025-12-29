@@ -1,7 +1,9 @@
+// src/realworks/client.ts
+
 export type RealWorksConfig = {
   baseUrl: string;   // bijv. https://api.realworks.nl
   afdeling: string;  // bijv. 935273
-  token: string;     // zonder "rwauth "
+  token: string;     // zonder 'rwauth ' prefix (wij plakken dat ervoor)
 };
 
 function authHeaders(token: string): Record<string, string> {
@@ -12,68 +14,99 @@ function authHeaders(token: string): Record<string, string> {
 }
 
 export async function rwFetchJson<T>(url: string, token: string): Promise<T> {
-  const r = await fetch(url, { headers: authHeaders(token) });
+  const r: Response = await fetch(url, { headers: authHeaders(token) });
 
   if (!r.ok) {
-    const txt = await r.text().catch(() => "");
+    const txt: string = await r.text().catch((): string => "");
     throw new Error(`RealWorks HTTP ${r.status} for ${url} :: ${txt.slice(0, 200)}`);
   }
 
-  return (await r.json()) as T;
+  const json: unknown = await r.json();
+  return json as T;
 }
 
-// --- Types (mini) voor wat we nodig hebben ---
-type ListResponse = {
-  resultaten?: Array<{
-    diversen?: { diversen?: { objectcode?: string; afdelingscode?: string } };
-    id?: number;
-  }>;
+// --- Types (minimaal wat we nodig hebben) ---
+type WonenListItem = {
+  id?: number;
+  diversen?: {
+    diversen?: {
+      objectcode?: string;
+      afdelingscode?: string;
+    };
+  };
+};
+
+type WonenListResponse = {
+  resultaten?: WonenListItem[];
   paginering?: { totaalAantal?: number };
 };
 
+// --- Helpers ---
+function joinUrl(baseUrl: string, path: string): string {
+  const b: string = baseUrl.replace(/\/+$/, "");
+  const p: string = path.replace(/^\/+/, "");
+  return `${b}/${p}`;
+}
+
+function getObjectCode(it: WonenListItem): string | null {
+  const code: string | undefined = it?.diversen?.diversen?.objectcode;
+  return code ?? null;
+}
+
+function getLastId(items: WonenListItem[]): number | null {
+  const last: WonenListItem | undefined = items[items.length - 1];
+  const id: number | null = typeof last?.id === "number" ? last.id : null;
+  return id;
+}
+
+/**
+ * List endpoint:
+ * GET {BASE_URL}/wonen/v3/objecten?actief=true&aantal=100(&vanaf=...)
+ *
+ * Retourneert objectcodes (string[]) zoals "EN104049"
+ */
 export async function fetchActiveObjectCodes(cfg: RealWorksConfig): Promise<string[]> {
-  const base = cfg.baseUrl.replace(/\/+$/, "");
+  const baseListUrl: string = joinUrl(cfg.baseUrl, "/wonen/v3/objecten");
+  const aantal: number = 100;
 
-  // paging via ?vanaf=ID (zoals in docs)
   const codes: string[] = [];
-  let vanaf: number | undefined = undefined;
+  let vanaf: number | null = null;
 
-  // hard cap om runaway te voorkomen
-  for (let page = 0; page < 20; page++) {
-    const url =
-      `${base}/wonen/v3/objecten?actief=true&aantal=100` +
-      (vanaf ? `&vanaf=${encodeURIComponent(String(vanaf))}` : "");
+  // simpele safety cap zodat we niet oneindig loopen als API vreemd doet
+  for (let page: number = 0; page < 50; page++) {
+    const url: string =
+      `${baseListUrl}?actief=true&aantal=${aantal}` + (vanaf ? `&vanaf=${vanaf}` : "");
 
-    const data = await rwFetchJson<ListResponse>(url, cfg.token);
+    const data: WonenListResponse = await rwFetchJson<WonenListResponse>(url, cfg.token);
 
-    const results = Array.isArray(data.resultaten) ? data.resultaten : [];
-    if (results.length === 0) break;
+    const results: WonenListItem[] = Array.isArray(data.resultaten) ? data.resultaten : [];
 
     for (const r of results) {
-      const code = r?.diversen?.diversen?.objectcode;
-      if (code) codes.push(String(code));
+      const code: string | null = getObjectCode(r);
+      if (code) codes.push(code);
     }
 
-    // pagination: laatste id als volgende "vanaf"
-    const last = results[results.length - 1];
-    const lastId = typeof last?.id === "number" ? last.id : undefined;
+    // klaar als minder dan 'aantal' terugkomt
+    if (results.length < aantal) break;
 
-    // als er geen id is, kunnen we niet verder pagineren -> stop
-    if (!lastId) break;
-
-    // prevent infinite loop
-    if (vanaf === lastId) break;
-
+    const lastId: number | null = getLastId(results);
+    if (!lastId || lastId === vanaf) break; // extra veiligheid
     vanaf = lastId;
   }
 
-  // unieke codes
+  // dedupe (voor de zekerheid)
   return Array.from(new Set(codes));
 }
 
-// Detail endpoint volgens webhook docs: /wonen/v3/objecten/{AFDELING}/{OBJECT}
-export async function fetchObjectDetail(cfg: RealWorksConfig, objectCode: string): Promise<any> {
-  const base = cfg.baseUrl.replace(/\/+$/, "");
-  const url = `${base}/wonen/v3/objecten/${encodeURIComponent(cfg.afdeling)}/${encodeURIComponent(objectCode)}`;
-  return await rwFetchJson<any>(url, cfg.token);
+/**
+ * Detail endpoint (zoals webhook doc):
+ * GET {BASE_URL}/wonen/v3/objecten/{AFDELING}/{OBJECT}
+ */
+export async function fetchObjectDetail(cfg: RealWorksConfig, objectCode: string): Promise<unknown> {
+  const detailPath: string =
+    `/wonen/v3/objecten/${encodeURIComponent(cfg.afdeling)}/${encodeURIComponent(objectCode)}`;
+  const url: string = joinUrl(cfg.baseUrl, detailPath);
+
+  const detail: unknown = await rwFetchJson<unknown>(url, cfg.token);
+  return detail;
 }
